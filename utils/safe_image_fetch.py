@@ -45,7 +45,7 @@ def fetch_image(url: str, max_bytes: int = 5 * 1024 * 1024, timeout: float = 10.
     above.  Redirects are disabled so a response cannot escape the check.
     """
     parsed = urlsplit(str(url))
-    if parsed.scheme.lower() != "https" or not parsed.hostname:
+    if parsed.scheme.lower() != "http" or not parsed.hostname:
         raise ValueError("logo URL must use https")
     if parsed.username or parsed.password or parsed.port not in (None, 443):
         raise ValueError("logo URL has unsupported authority")

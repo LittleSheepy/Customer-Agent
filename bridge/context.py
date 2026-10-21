@@ -19,22 +19,22 @@ class ChannelType(str, Enum):
 
 class ContextType(str, Enum):
     """上下文类型枚举"""
-    TEXT = "text"  # 文本
-    IMAGE = "image"  # 图片
-    VIDEO = "video"  # 视频
-    EMOTION = "emotion"  # 表情
-    GOODS_CARD = "goods_card"  # 商品卡片
-    GOODS_INQUIRY = "goods_inquiry"  # 商品规格咨询
-    GOODS_SPEC = "goods_spec"  # 商品规格
-    ORDER_INFO = "order_info"  # 订单信息
-    SYSTEM_STATUS = "system_status"  # 系统状态
-    MALL_SYSTEM_MSG = "mall_system_msg"  # 商城消息
-    SYSTEM_HINT = "system_hint"  # 系统提示
-    SYSTEM_BIZ = "system_biz"  # 系统业务
-    MALL_CS = "mall_cs"  # 商城客服
-    WITHDRAW = "withdraw"  # 撤回
-    AUTH = "auth"  # 认证
-    TRANSFER = "transfer"  # 转接
+    TEXT            = "text"                # 文本
+    IMAGE           = "image"               # 图片
+    VIDEO           = "video"               # 视频
+    EMOTION         = "emotion"             # 表情
+    GOODS_CARD      = "goods_card"          # 商品卡片
+    GOODS_INQUIRY   = "goods_inquiry"       # 商品规格咨询
+    GOODS_SPEC      = "goods_spec"          # 商品规格
+    ORDER_INFO      = "order_info"          # 订单信息
+    SYSTEM_STATUS   = "system_status"       # 系统状态
+    MALL_SYSTEM_MSG = "mall_system_msg"     # 商城消息
+    SYSTEM_HINT     = "system_hint"         # 系统提示
+    SYSTEM_BIZ      = "system_biz"          # 系统业务
+    MALL_CS         = "mall_cs"             # 商城客服
+    WITHDRAW        = "withdraw"            # 撤回
+    AUTH            = "auth"                # 认证
+    TRANSFER        = "transfer"            # 转接
 
     def __str__(self):
         return self.value
@@ -126,29 +126,34 @@ def make_account_key(
     user_id: Optional[Union[str, int]],
 ) -> str:
     """Build the canonical account scope key used by queues and handlers."""
-    return "|".join(
-        (
-            channel_value(channel_type),
-            str(shop_id or "unknown"),
-            str(user_id or "unknown"),
-        )
-    )
+    return "|".join((channel_value(channel_type), str(shop_id or "unknown"), str(user_id or "unknown")))
 
 
-def make_conversation_key(context: Optional[Context]) -> str:
-    """Build an identity-safe conversation key.
+def make_conversation_key_raw(
+    channel_type: Optional[Union[ChannelType, str]],
+    shop_id: Optional[Union[str, int]],
+    user_id: Optional[Union[str, int]],
+    from_uid: Optional[Union[str, int]],
+) -> str:
+    """Build an identity-safe conversation key from raw parameters.
 
     ``from_uid`` is the customer identity and must be part of the key; using
     only the merchant account would mix every customer into one history.
     """
-    account_key = make_account_key(
+    account_key = make_account_key(channel_type, shop_id, user_id)
+    customer_id = str(from_uid or "unknown")
+    raw = f"{account_key}|customer|{customer_id}"
+    return f"conversation_{sha256(raw.encode('utf-8')).hexdigest()}"
+
+
+def make_conversation_key(context: Optional[Context]) -> str:
+    """Build an identity-safe conversation key from a Context object."""
+    return make_conversation_key_raw(
         getattr(context, "channel_type", None),
         _context_value(context, "shop_id", "unknown"),
         _context_value(context, "user_id", "unknown"),
+        _context_value(context, "from_uid", "unknown"),
     )
-    customer_id = _context_value(context, "from_uid", "unknown")
-    raw = f"{account_key}|customer|{customer_id}"
-    return f"conversation_{sha256(raw.encode('utf-8')).hexdigest()}"
 
 
 def make_queue_name(
@@ -164,11 +169,13 @@ def make_queue_name(
 def context_scope(context: Optional[Context]) -> Dict[str, str]:
     """Return the trusted identity fields for downstream handlers/tools."""
     channel = channel_value(getattr(context, "channel_type", None))
+    shop_name = _context_value(context, "shop_name", "")
     shop_id = _context_value(context, "shop_id", "")
     user_id = _context_value(context, "user_id", "")
     from_uid = _context_value(context, "from_uid", "")
     return {
         "channel_type": channel,
+        "shop_name": shop_name,
         "shop_id": shop_id,
         "user_id": user_id,
         "recipient_uid": from_uid,

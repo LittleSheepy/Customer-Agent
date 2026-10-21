@@ -39,20 +39,41 @@ class SendMessage(BaseRequest):
         }
 
         result = self.post(url, json_data=data)
-        if result and result.get("success") == True:
-            if result.get("result", {}).get("error_code") == 10002:
-                self.logger.error(
-                    "发送文本消息失败: platform_error_code=10002"
-                )
-                return None
-            else:
-                return result
-        else:
+
+        # 记录原始响应（脱敏），便于排查“外层 success=true 但实际未投递”的假成功
+        self.logger.debug(f"send_text 响应: {self._sanitize_for_log(result)}")
+
+        # 1. 外层 success 必须为 True
+        if not (result and result.get("success") is True):
             self.logger.error(
                 "发送文本消息失败: "
                 f"response_keys={sorted(result.keys()) if isinstance(result, dict) else []}"
             )
             return None
+
+        # 2. PDD 成功码为顶层 error_code == 1000000（见接口响应样例）。
+        # 外层 success=true 但 error_code 非成功码时，多为风控拦截 / 会话异常，
+        # 消息并未真正投递，必须判为失败；否则上层会误记“发送成功”，
+        # 客户却收不到（表现为首次假成功、二次才成功）。
+        # 保守起见：error_code 缺省或为 0/1000000 均视为成功，避免误伤正常发送。
+        error_code = result.get("error_code")
+        if error_code is not None and error_code not in (0, 1000000):
+            self.logger.error(
+                f"发送文本消息未投递: error_code={error_code}, "
+                f"error_msg={result.get('error_msg')}"
+            )
+            return None
+
+        # 3. 兼容内层 result.error_code（如平台侧 10002）：非成功码同样判为失败
+        inner = result.get("result")
+        inner_code = inner.get("error_code") if isinstance(inner, dict) else None
+        if inner_code not in (None, 0, 1000000):
+            self.logger.error(
+                f"发送文本消息未投递: inner_error_code={inner_code}"
+            )
+            return None
+
+        return result
 
  
         

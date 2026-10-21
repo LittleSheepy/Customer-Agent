@@ -60,3 +60,4 @@ CLAUDE.md
 .github/*
 !.github/workflows/
 !.github/workflows/**
+/files

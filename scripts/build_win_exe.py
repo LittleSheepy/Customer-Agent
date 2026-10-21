@@ -2,6 +2,10 @@ import sys, subprocess, shutil, platform, os
 from pathlib import Path
 import argparse
 
+# 确保工作目录为项目根目录（脚本位于 scripts/ 下）
+_project_root = Path(__file__).resolve().parent.parent
+os.chdir(_project_root)
+
 # CI（GitHub Actions windows runner）默认控制台编码是 cp1252，打印中文会
 # UnicodeEncodeError。强制 stdout/stderr 用 UTF-8，保证任何机器上都能输出。
 for _stream in (sys.stdout, sys.stderr):
@@ -118,8 +122,7 @@ def main():
     parser = argparse.ArgumentParser(description="构建 Windows 发布包")
     parser.add_argument("--python", default="3.11", help="Python 版本，默认 3.11")
     parser.add_argument("--clean", action="store_true", help="构建前清理")
-    parser.add_argument("--skip-installer", action="store_true",
-                        help="只打包 PyInstaller onedir，不生成 Inno 安装程序")
+    parser.add_argument("--skip-installer", action="store_true", help="只打包 PyInstaller onedir，不生成 Inno 安装程序")
     args = parser.parse_args()
 
     check_platform()

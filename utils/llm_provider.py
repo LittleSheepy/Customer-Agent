@@ -535,7 +535,7 @@ def build_llm_profile(
         if require_api_key and not data.api_key:
             raise ProfileValidationError(
                 "missing_api_key",
-                f"{provider_spec(data.provider).label} 闇€瑕佸～鍐?API Key",
+                f"{provider_spec(data.provider).label} 需要填写 API Key",
                 field="api_key",
             )
         try:

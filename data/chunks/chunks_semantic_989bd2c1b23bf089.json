@@ -1,0 +1,23 @@
+{
+  "total_chunks": 1,
+  "chunking_method": "semantic",
+  "breakpoint_threshold": 0.5,
+  "min_chunk_size": 100,
+  "max_chunk_size": 1000,
+  "chunks": [
+    {
+      "index": 0,
+      "content": "1.发德邦快运或者京东物流，顺丰\n根据不同地区选合适的物流\n不支持指定(不要主动提指定相关的)\n\n2.亲亲~一般是付款后48-72小时左右发出哦，我们会根据下单时间陆续发货的亲，早拍早发货哦",
+      "metadata": {
+        "source": "D:\\00sheepy\\01code\\02alg_code_bjb\\agent\\Customer-Agent-my\\物流信息.md",
+        "source_file": "D:\\00sheepy\\01code\\02alg_code_bjb\\agent\\Customer-Agent-my\\物流信息.md",
+        "file_name": "物流信息.md",
+        "file_type": ".md",
+        "chunk_index": 0,
+        "chunk_size": 95,
+        "chunking_method": "semantic"
+      },
+      "size": 95
+    }
+  ]
+}

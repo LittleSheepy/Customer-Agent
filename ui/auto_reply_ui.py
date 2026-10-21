@@ -8,7 +8,11 @@ from ui.auto_reply import (
     SetStatusThread,
     AutoReplyManager,
     auto_reply_manager,
-    AutoReplyCard,
+    ShopListItem,
+    CustomerListItem,
+    ChatBubble,
+    ChatPanel,
+    filter_message_content,
     AutoReplyUI,
 )
 
@@ -18,6 +22,10 @@ __all__ = [
     'SetStatusThread',
     'AutoReplyManager',
     'auto_reply_manager',
-    'AutoReplyCard',
+    'ShopListItem',
+    'CustomerListItem',
+    'ChatBubble',
+    'ChatPanel',
+    'filter_message_content',
     'AutoReplyUI',
 ]

@@ -11,7 +11,7 @@ from utils.db_pragma import setup_sqlite_pragmas
 from utils.runtime_path import resolve_data_path
 from utils.secret_store import protect_secret, unprotect_secret
 from database.models import Base, Channel, Shop, Account, Keyword
-
+from sqlalchemy import select
 
 class DatabaseManager:
     """数据库管理类，提供数据库操作的封装
@@ -48,7 +48,6 @@ class DatabaseManager:
         channel_name = "pinduoduo"
         description = "拼多多"
         self.add_channel(channel_name, description)
-
 
     def get_session(self):
         """获取数据库会话"""
@@ -126,26 +125,32 @@ class DatabaseManager:
         """获取渠道对象"""
         return session.query(Channel).filter(Channel.channel_name == channel_name).first()
 
+    def _get_shop_1x(self, session: Session, channel: Channel, shop_id: str) -> Optional[Shop]:
+        """获取店铺对象"""
+        shop = session.query(Shop).filter(
+            Shop.channel_id == channel.id, Shop.shop_id == shop_id
+        ).first()
+        return shop
+
     def _get_shop(self, session: Session, channel: Channel, shop_id: str) -> Optional[Shop]:
         """获取店铺对象"""
-        return session.query(Shop).filter(
-            Shop.channel_id == channel.id,
-            Shop.shop_id == shop_id
-        ).first()
+        stmt = select(Shop).where(Shop.channel_id == channel.id, Shop.shop_id == shop_id)
+        shop = session.execute(stmt).scalars().first()
+        return shop
 
     def _get_account_by_user_id(self, session: Session, shop: Shop, user_id: str) -> Optional[Account]:
         """通过user_id获取账号对象"""
-        return session.query(Account).filter(
-            Account.shop_id == shop.id,
-            Account.user_id == user_id
-        ).first()
+        stmt = select(Account).where(Account.shop_db_id == shop.id, Account.user_id == user_id)
+        account = session.execute(stmt).scalars().first()
+        return account
+        # return session.query(Account).filter(Account.shop_db_id == shop.id, Account.user_id == user_id).first()
 
     def _get_account_by_username(self, session: Session, shop: Shop, username: str) -> Optional[Account]:
         """通过username获取账号对象"""
-        return session.query(Account).filter(
-            Account.shop_id == shop.id,
-            Account.username == username
-        ).first()
+        stmt = select(Account).where(Account.shop_db_id == shop.id, Account.username == username)
+        account = session.execute(stmt).scalars().first()
+        return account
+        # return session.query(Account).filter(Account.shop_db_id == shop.id, Account.username == username).first()
 
     # ==================== 渠道相关操作 ====================
     def add_channel(self, channel_name: str, description: str = None) -> bool:
@@ -239,6 +244,24 @@ class DatabaseManager:
                 'description': shop.description,
             }
 
+    def resolve_shop_db_id(self, shop_id: Union[int, str]) -> Optional[int]:
+        """
+        将店铺平台 ID 转换为数据库中的 Shop.id（shop_db_id）
+
+        Args:
+            shop_id: 店铺平台 ID（如 591119888）
+
+        Returns:
+            数据库中的 Shop.id（如 1），如果找不到返回 None
+        """
+        with self.session_scope() as session:
+            stmt = select(Shop).where(Shop.shop_id == str(shop_id))
+            shop = session.scalar(stmt)
+            if shop:
+                return shop.id
+            self.logger.warning(f"未找到店铺: shop_id={shop_id}")
+            return None
+
     def get_shops_by_channel(self, channel_name: str) -> List[Dict[str, Any]]:
         """获取指定渠道下的所有店铺"""
         with self.session_scope() as session:
@@ -309,7 +332,7 @@ class DatabaseManager:
                 self.logger.warning(f"账号 {username} 已存在于店铺 {shop_id}")
                 return False
             account = Account(
-                shop_id=shop.id,
+                shop_db_id=shop.id,
                 user_id=user_id,
                 username=username,
                 password=protect_secret(password) or "",
@@ -337,7 +360,7 @@ class DatabaseManager:
                 return None
             return {
                 'id': account.id,
-                'shop_id': account.shop_id,
+                'shop_id': account.shop_db_id,
                 'user_id': account.user_id,
                 'username': account.username,
                 'password': self._read_password(account),
@@ -380,12 +403,12 @@ class DatabaseManager:
             shop = self._get_shop(session, channel, shop_id)
             if not shop:
                 return []
-            accounts = session.query(Account).filter(Account.shop_id == shop.id).all()
+            accounts = session.query(Account).filter(Account.shop_db_id == shop.id).all()
             result = []
             for account in accounts:
                 result.append({
                     'id': account.id,
-                    'shop_id': account.shop_id,
+                    'shop_db_id': account.shop_db_id,
                     'user_id': account.user_id,
                     'username': account.username,
                     'password': self._read_password(account),
@@ -405,7 +428,7 @@ class DatabaseManager:
             # 使用 join 一次性查询所有数据
             results = (
                 session.query(Account, Shop, Channel)
-                .join(Shop, Account.shop_id == Shop.id)
+                .join(Shop, Account.shop_db_id == Shop.id)
                 .join(Channel, Shop.channel_id == Channel.id)
                 .all()
             )
@@ -417,11 +440,11 @@ class DatabaseManager:
                     'shop_id': shop.shop_id,
                     'shop_name': shop.shop_name,
                     'shop_logo': shop.shop_logo,
+                    'user_id': account.user_id,
                     'username': account.username,
                     'password': self._read_password(account),
-                    'status': account.status,
-                    'user_id': account.user_id,
-                    'cookies': self._read_cookies(account)
+                    'cookies': self._read_cookies(account),
+                    'status': account.status
                 })
             return details
 

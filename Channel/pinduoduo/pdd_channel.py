@@ -66,7 +66,7 @@ class PDDChannel(ConnectionMixin, MessageHandlerMixin, LifecycleMixin, StatusMix
         super().__init__()
         self.channel_name = "pinduoduo"
         self.logger = get_logger("PDDChannel")
-
+        self.account_info = None
         # 从 DI 容器获取 ConnectionStatusManager（所有实例共享同一个）
         if status_manager is None:
             from core.di_container import container

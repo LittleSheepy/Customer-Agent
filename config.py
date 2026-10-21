@@ -40,30 +40,10 @@ class _LegacyModelType(str, Enum):
 # the typed LLM profile uses the newer explicit ``LLMProvider`` enum below.
 ModelType = _LegacyModelType
 
-
-class LLMConfig(BaseModel):
-    """LLM 配置模型"""
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-    provider: LLMProvider = Field(
-        default=LLMProvider.OPENAI_COMPATIBLE,
-        description="模型供应商身份",
-    )
-    model_name: str = Field(default="", description="模型名称")
-    api_key: str = Field(default="", description="API密钥")
-    api_base: str = Field(default="", description="API地址")
-
-
-    endpoint_trust_mode: EndpointTrustMode = Field(
-        default=EndpointTrustMode.DEFAULT,
-        description="端点信任模式",
-    )
-    tool_policy: ToolPolicy = Field(
-        default=ToolPolicy.ENABLED,
-        description="工具调用策略",
-    )
-    capability_confirmation: str = Field(default="", description="能力确认指纹")
-    tool_trust_confirmation: str = Field(default="", description="工具端点信任指纹")
-
+class RetrieverType(str, Enum):
+    VECTOR = "vector"
+    BM25 = "bm25"
+    HYBRID = "hybrid"
 
 class BusinessHoursConfig(BaseModel):
     """营业时间配置模型"""
@@ -80,27 +60,101 @@ class BusinessHoursConfig(BaseModel):
         except ValueError:
             raise ValueError('时间格式必须为HH:MM，例如08:00')
 
+class LLMConfig(BaseModel):
+    """LLM 配置模型"""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    provider: LLMProvider = Field(default=LLMProvider.DEEPSEEK, description="模型供应商身份")
+    model_name: str = Field(default="", description="模型名称")
+    embedding_model_name: str = Field(default="", description="embedding模型名称")
+    aliyun_embedding_batch_size: int = Field(default=2, description="阿里云批向量化大小")
+    api_key: str = Field(default="", description="API密钥")
+    api_base: str = Field(default="", description="API地址")
+    endpoint_trust_mode: EndpointTrustMode = Field(default=EndpointTrustMode.DEFAULT, description="端点信任模式")
+    tool_policy: ToolPolicy = Field(default=ToolPolicy.ENABLED, description="工具调用策略")
+    capability_confirmation: str = Field(default="", description="能力确认指纹")
+    generate_temperature: float = Field(default=0.3, description="生成任务温度")
+    eval_temperature: float = Field(default=0.1, description="评估/路由任务温度")
+    tool_trust_confirmation: str = Field(default="", description="工具端点信任指纹")
+
+
+class AgentConfig(BaseModel):
+    """Agent 配置"""
+    active: str = Field(default="agentic", description="Agent 类型选择")
+    retriever: str = Field(default=RetrieverType.HYBRID, description="Retriever 类型选择")
+    max_loops: int = Field(default=10, description="Agent Loop 最大工具调用轮次")
+    context_max_length: int = Field(default=3000, description="RAG 上下文最大字符数")
+    token_window: int = Field(default=131072, description="模型 context window 大小")
+    compress_ratio: float = Field(default=0.7, description="历史压缩触发比例")
+    retain_count: int = Field(default=10, description="压缩后保留的最近消息条数")
+    # 韧性层配置（熔断器 + 重试）
+    llm_max_retries: int = Field(default=2, description="LLM 调用最大重试次数")
+    llm_backoff_base: float = Field(default=0.5, description="重试退避基数（秒）")
+    llm_failure_threshold: int = Field(default=5, description="连续失败多少次触发熔断")
+    llm_recovery_timeout: float = Field(default=60.0, description="熔断冷却时间（秒）")
+    # 中间件管道配置
+    request_timeout: float = Field(default=60.0, description="请求超时时间（秒）")
+    classify_timeout: float = Field(default=15.0, description="意图分类超时时间（秒），超时回退默认意图")
+    # 会话锁 LRU 配置
+    max_session_locks: int = Field(default=1000, description="最大会话锁数量（LRU 淘汰）")
+
+class SelfRagConfig(BaseModel):
+    """SelfRag 自反思检索配置"""
+    max_iterations: int = Field(default=3, description="最大自反思迭代次数")
+    quality_threshold: float = Field(default=0.7, description="答案质量阈值（低于该值且缺失信息时触发迭代）")
+    relevance_threshold: float = Field(default=0.5, description="检索文档相关性过滤阈值")
+    history_limit: int = Field(default=20, description="拼入提示词的最近历史条数")
+    human_agent_hint: str = Field(default="抱歉，这个问题我暂时没能为您找到准确答案，建议您联系人工客服处理哦～", description="RAG 无法回答时的转人工提示")
+
+class RetrieverConfig(BaseModel):
+    """检索配置"""
+    retrieval_limit: int = Field(default=10, description="KnowledgeService 单次检索文档数")
+    doc_truncate_length: int = Field(default=1000, description="相关性评估时单个文档截断长度")
+    quality_context_max_length: int = Field(default=2000, description="质量评估时上下文最大长度")
+
+class ChunkerConfig(BaseModel):
+    """文档分块配置"""
+    active: str = Field(default="semantic", description="Chunker 类型选择")
+    chunk_size: int = Field(default=256, description="分块最大字符数")
+    chunk_overlap: int = Field(default=50, description="分块重叠字符数")
+    store_dir: str = Field(default="./temp/knowledge_docs", description="上传文档原件保存目录")
+    supported_suffixes: list[str] = Field(
+        default=[".pdf", ".docx", ".txt", ".md"],
+        description="支持的文档后缀名",
+    )
+
+
+class EmbeddingConfig(BaseModel):
+    """向量检索 / Embedding 配置"""
+    enabled: bool = Field(default=True, description="向量检索总开关")
+    model: str = Field(default="text-embedding-v4", description="Embedding 模型名称")
+    persist_dir: str = Field(default="./temp/chroma", description="Chroma 持久化目录")
+    top_k: int = Field(default=5, description="向量检索返回条数")
+    batch_size: int = Field(default=10, description="Embedding 单请求最大条数")
+    rebuild_cooldown: int = Field(default=300, description="索引重建失败后的冷却时间（秒）")
+
+
 class PromptConfig(BaseModel):
     """提示词配置模型"""
-    instructions: list[str] = Field(default_factory=list, description="指令")
+    enabled: list[str] = Field(default_factory=list, description="指令")
+    catalog_max_length: int = Field(default=12000, description="商品目录最大字符数")
+    dependency_value_max_length: int = Field(default=2000, description="依赖字段值最大字符数")
+    session_value_max_length: int = Field(default=256, description="会话信息字段最大字符数")
 
 
 class ConfigModel(BaseModel):
     """配置模型"""
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    business_hours: BusinessHoursConfig = Field(
-        default_factory=BusinessHoursConfig,
-        description="营业时间配置"
-    )
-    llm: LLMConfig = Field(
-        default_factory=LLMConfig,
-        description="LLM配置"
-    )
-    prompt: PromptConfig = Field(
-        default_factory=PromptConfig,
-        description="提示词配置"
-    )
+    business_hours: BusinessHoursConfig = Field(default_factory=BusinessHoursConfig, description="营业时间配置")
     db_path: str = Field(default="./temp/channel_shop.db", description="数据库路径")
+    llm: LLMConfig = Field(default_factory=LLMConfig, description="LLM配置")
+    agent: AgentConfig = Field(default_factory=AgentConfig, description="Agent配置")
+    chunker: ChunkerConfig = Field(default_factory=ChunkerConfig, description="Chunker配置")
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig, description="向量配置")
+    self_rag: SelfRagConfig = Field(default_factory=SelfRagConfig, description="SelfRag配置")
+    retriever: RetrieverConfig = Field(default_factory=RetrieverConfig, description="检索配置")
+    prompt: PromptConfig = Field(default_factory=PromptConfig, description="提示词配置")
+    top_k: int = Field(default=5, description="检索召回数")
+
 
 
 
@@ -111,15 +165,63 @@ config_base = {
         "end": "23:00"
     },
     "db_path": "./temp/channel_shop.db",
+    "top_k": 5,
     "llm": {
-        "provider": LLMProvider.OPENAI_COMPATIBLE.value,
+        "provider": LLMProvider.DEEPSEEK.value,
         "model_name": "",
+        "embedding_model_name": "",
+        "aliyun_embedding_batch_size": 2,
         "api_key": "",
         "api_base": "",
         "endpoint_trust_mode": EndpointTrustMode.DEFAULT.value,
         "tool_policy": ToolPolicy.ENABLED.value,
         "capability_confirmation": "",
-        "tool_trust_confirmation": "",
+        "generate_temperature": 0.3,
+        "eval_temperature": 0.1,
+        "tool_trust_confirmation": ""
+    },
+    "agent": {
+        "active": "agentic",
+        "retriever": "hybrid",
+        "max_loops": 10,
+        "context_max_length": 3000,
+        "token_window": 131072,
+        "compress_ratio": 0.7,
+        "retain_count": 10,
+        "llm_max_retries": 2,
+        "llm_backoff_base": 0.5,
+        "llm_failure_threshold": 5,
+        "llm_recovery_timeout": 60.0,
+        "request_timeout": 60.0,
+        "classify_timeout": 15.0,
+        "max_session_locks": 1000
+    },
+    "chunker": {
+        "active": "semantic",
+        "chunk_size": 256,
+        "chunk_overlap": 50,
+        "store_dir": "./temp/knowledge_docs",
+        "supported_suffixes": [".pdf", ".docx", ".txt", ".md"]
+    },
+    "self_rag": {
+        "max_iterations": 3,
+        "quality_threshold": 0.7,
+        "relevance_threshold": 0.5,
+        "history_limit": 20,
+        "human_agent_hint": "抱歉，这个问题我暂时没能为您找到准确答案，建议您联系人工客服处理哦～"
+    },
+    "retriever": {
+        "retrieval_limit": 10,
+        "doc_truncate_length": 1000,
+        "quality_context_max_length": 2000
+    },
+    "embedding": {
+        "enabled": True,
+        "model": "text-embedding-v4",
+        "persist_dir": "./temp/chroma",
+        "top_k": 5,
+        "batch_size": 10,
+        "rebuild_cooldown": 300
     },
     "prompt": {
         "instructions": [

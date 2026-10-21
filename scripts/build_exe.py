@@ -11,7 +11,10 @@ import shutil
 import platform
 import argparse
 from pathlib import Path
-import json
+import os
+# 确保工作目录为项目根目录（脚本位于 scripts/ 下）
+_project_root = Path(__file__).resolve().parent.parent
+os.chdir(_project_root)
 
 def run_command(cmd, cwd=None):
     """运行命令并输出日志"""
@@ -315,36 +318,11 @@ def main():
         """
     )
 
-    parser.add_argument(
-        "--python",
-        default="3.11",
-        help="Python 版本，默认 3.11"
-    )
-
-    parser.add_argument(
-        "--mode",
-        choices=["release", "debug"],
-        default="release",
-        help="构建模式，release(默认) 或 debug"
-    )
-
-    parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="先清理构建文件"
-    )
-
-    parser.add_argument(
-        "--installer",
-        action="store_true",
-        help="创建 NSIS 安装包脚本"
-    )
-
-    parser.add_argument(
-        "--check-only",
-        action="store_true",
-        help="仅检查依赖，不执行构建"
-    )
+    parser.add_argument("--python", default="3.11", help="Python 版本，默认 3.11")
+    parser.add_argument("--mode", choices=["release", "debug"], default="release", help="构建模式，release(默认) 或 debug")
+    parser.add_argument("--clean", action="store_true", help="先清理构建文件")
+    parser.add_argument("--installer", action="store_true", help="创建 NSIS 安装包脚本")
+    parser.add_argument("--check-only", action="store_true", help="仅检查依赖，不执行构建")
 
     args = parser.parse_args()
 

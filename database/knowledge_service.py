@@ -10,7 +10,7 @@ from sqlalchemy import select, and_, or_
 from sqlalchemy.orm import Session
 import jieba
 from utils.logger_loguru import get_logger
-from database.models import Base, ProductKnowledge, CustomerServiceKnowledge, Shop
+from database.models import Base, ProductKnowledge, CustomerServiceKnowledge, KnowledgeDocument, Shop
 from database.db_manager import db_manager
 
 logger = get_logger("KnowledgeService")
@@ -33,35 +33,35 @@ class KnowledgeService:
 
     # ========== 产品知识 ==========
 
-    def get_product_by_goods_id(self, shop_id: int, goods_id: int) -> Optional[ProductKnowledge]:
+    def get_product_by_goods_id(self, shop_db_id: int, goods_id: int) -> Optional[ProductKnowledge]:
         """根据商品ID获取产品知识"""
         with self.get_session() as session:
             stmt = select(ProductKnowledge).where(
                 and_(
-                    ProductKnowledge.shop_id == shop_id,
+                    ProductKnowledge.shop_db_id == shop_db_id,
                     ProductKnowledge.goods_id == goods_id
                 )
             )
             return session.scalar(stmt)
 
-    def list_products_by_shop(self, shop_id: int) -> List[ProductKnowledge]:
+    def list_products_by_shop(self, shop_db_id: int) -> List[ProductKnowledge]:
         """获取店铺所有产品知识"""
         with self.get_session() as session:
             stmt = select(ProductKnowledge).where(
-                ProductKnowledge.shop_id == shop_id
+                ProductKnowledge.shop_db_id == shop_db_id
             ).order_by(ProductKnowledge.created_at.desc())
             return list(session.scalars(stmt))
 
-    def count_products_by_shop(self, shop_id: int) -> int:
+    def count_products_by_shop(self, shop_db_id: int) -> int:
         """统计店铺产品知识数量"""
         with self.get_session() as session:
             return session.query(ProductKnowledge).filter(
-                ProductKnowledge.shop_id == shop_id
+                ProductKnowledge.shop_db_id == shop_db_id
             ).count()
 
     def add_or_update_product(
         self,
-        shop_id: int,
+        shop_db_id: int,
         goods_id: int,
         goods_name: str,
         price: Optional[str] = None,
@@ -77,7 +77,7 @@ class KnowledgeService:
             # 在同一个 session 中查询
             stmt = select(ProductKnowledge).where(
                 and_(
-                    ProductKnowledge.shop_id == shop_id,
+                    ProductKnowledge.shop_db_id == shop_db_id,
                     ProductKnowledge.goods_id == goods_id
                 )
             )
@@ -107,7 +107,7 @@ class KnowledgeService:
             else:
                 # 创建新记录
                 product = ProductKnowledge(
-                    shop_id=shop_id,
+                    shop_db_id=shop_db_id,
                     goods_id=goods_id,
                     goods_name=goods_name,
                     price=price,
@@ -125,17 +125,17 @@ class KnowledgeService:
             # 重新查询以确保返回的是附加到 session 的对象
             stmt = select(ProductKnowledge).where(
                 and_(
-                    ProductKnowledge.shop_id == shop_id,
+                    ProductKnowledge.shop_db_id == shop_db_id,
                     ProductKnowledge.goods_id == goods_id
                 )
             )
             result = session.scalar(stmt)
-            logger.info(f"产品知识保存成功: shop_id={shop_id}, goods_id={goods_id}")
+            logger.info(f"产品知识保存成功: shop_db_id={shop_db_id}, goods_id={goods_id}")
             return result
 
     def update_product_extracted_content(
         self,
-        shop_id: int,
+        shop_db_id: int,
         goods_id: int,
         specifications: Optional[str] = None,
         extracted_content: Optional[str] = None,
@@ -144,13 +144,13 @@ class KnowledgeService:
         with self.get_session() as session:
             stmt = select(ProductKnowledge).where(
                 and_(
-                    ProductKnowledge.shop_id == shop_id,
+                    ProductKnowledge.shop_db_id == shop_db_id,
                     ProductKnowledge.goods_id == goods_id
                 )
             )
             product = session.scalar(stmt)
             if not product:
-                logger.warning(f"产品不存在，无法更新提取内容: shop_id={shop_id}, goods_id={goods_id}")
+                logger.warning(f"产品不存在，无法更新提取内容: shop_db_id={shop_db_id}, goods_id={goods_id}")
                 return False
 
             if specifications is not None:
@@ -160,7 +160,7 @@ class KnowledgeService:
             product.last_extracted_at = datetime.now()
 
             session.commit()
-            logger.info(f"产品提取内容更新成功: shop_id={shop_id}, goods_id={goods_id}")
+            logger.info(f"产品提取内容更新成功: shop_db_id={shop_db_id}, goods_id={goods_id}")
             return True
 
     def delete_product(self, product_id: int) -> bool:
@@ -174,14 +174,24 @@ class KnowledgeService:
             logger.info(f"产品知识删除成功: id={product_id}")
             return True
 
-    def clear_products_by_shop(self, shop_id: int) -> int:
+    def clear_products_by_shop(self, shop_db_id: int) -> int:
         """清空店铺所有产品知识，返回删除数量"""
         with self.get_session() as session:
             count = session.query(ProductKnowledge).filter(
-                ProductKnowledge.shop_id == shop_id
+                ProductKnowledge.shop_db_id == shop_db_id
             ).delete()
             session.commit()
-            logger.info(f"清空店铺产品知识: shop_id={shop_id}, deleted={count}")
+            logger.info(f"清空店铺产品知识: shop_db_id={shop_db_id}, deleted={count}")
+            return count
+
+    def clear_customer_service_by_shop(self, shop_db_id: int) -> int:
+        """清空店铺所有客服知识，返回删除数量"""
+        with self.get_session() as session:
+            count = session.query(CustomerServiceKnowledge).filter(
+                CustomerServiceKnowledge.shop_db_id == shop_db_id
+            ).delete()
+            session.commit()
+            logger.info(f"清空店铺客服知识: shop_db_id={shop_db_id}, deleted={count}")
             return count
 
     # ========== 客服知识 ==========
@@ -191,35 +201,35 @@ class KnowledgeService:
         with self.get_session() as session:
             return session.get(CustomerServiceKnowledge, cs_id)
 
-    def list_customer_service_by_shop(self, shop_id: int) -> List[CustomerServiceKnowledge]:
+    def list_customer_service_by_shop(self, shop_db_id: int) -> List[CustomerServiceKnowledge]:
         """获取店铺所有启用的客服知识"""
         with self.get_session() as session:
             stmt = select(CustomerServiceKnowledge).where(
                 and_(
-                    CustomerServiceKnowledge.shop_id == shop_id,
+                    CustomerServiceKnowledge.shop_db_id == shop_db_id,
                     CustomerServiceKnowledge.enabled == True
                 )
             ).order_by(CustomerServiceKnowledge.created_at.desc())
             return list(session.scalars(stmt))
 
-    def list_customer_service_with_disabled(self, shop_id: int) -> List[CustomerServiceKnowledge]:
+    def list_customer_service_with_disabled(self, shop_db_id: int) -> List[CustomerServiceKnowledge]:
         """获取店铺所有客服知识（包括禁用的）"""
         with self.get_session() as session:
             stmt = select(CustomerServiceKnowledge).where(
-                CustomerServiceKnowledge.shop_id == shop_id
+                CustomerServiceKnowledge.shop_db_id == shop_db_id
             ).order_by(CustomerServiceKnowledge.created_at.desc())
             return list(session.scalars(stmt))
 
-    def count_customer_service_by_shop(self, shop_id: int) -> int:
+    def count_customer_service_by_shop(self, shop_db_id: int) -> int:
         """统计店铺客服知识数量"""
         with self.get_session() as session:
             return session.query(CustomerServiceKnowledge).filter(
-                CustomerServiceKnowledge.shop_id == shop_id
+                CustomerServiceKnowledge.shop_db_id == shop_db_id
             ).count()
 
     def add_customer_service(
         self,
-        shop_id: int,
+        shop_db_id: int,
         title: str,
         content: str,
         tags: Optional[str] = None,
@@ -228,7 +238,7 @@ class KnowledgeService:
         """添加客服知识"""
         with self.get_session() as session:
             cs = CustomerServiceKnowledge(
-                shop_id=shop_id,
+                shop_db_id=shop_db_id,
                 title=title,
                 content=content,
                 tags=tags,
@@ -236,7 +246,7 @@ class KnowledgeService:
             )
             session.add(cs)
             session.commit()
-            logger.info(f"客服知识添加成功: shop_id={shop_id}, title={title}")
+            logger.info(f"客服知识添加成功: shop_db_id={shop_db_id}, title={title}")
             return cs
 
     def update_customer_service(
@@ -277,13 +287,13 @@ class KnowledgeService:
 
     def batch_import_customer_service(
         self,
-        shop_id: int,
+        shop_db_id: int,
         rows: List[Dict[str, Any]],
     ) -> tuple[int, int]:
         """批量导入客服知识，跳过重复项（同店铺内标题+内容完全相同）
 
         Args:
-            shop_id: 店铺数据库ID
+            shop_db_id: 店铺数据库ID
             rows: 待导入行列表，每项含 title, content, tags
 
         Returns:
@@ -300,7 +310,7 @@ class KnowledgeService:
                 # 重复检测：同店铺下标题+内容完全相同
                 stmt = select(CustomerServiceKnowledge).where(
                     and_(
-                        CustomerServiceKnowledge.shop_id == shop_id,
+                        CustomerServiceKnowledge.shop_db_id == shop_db_id,
                         CustomerServiceKnowledge.title == title,
                         CustomerServiceKnowledge.content == content,
                     )
@@ -310,7 +320,7 @@ class KnowledgeService:
                     continue
 
                 cs = CustomerServiceKnowledge(
-                    shop_id=shop_id,
+                    shop_db_id=shop_db_id,
                     title=title,
                     content=content,
                     tags=tags,
@@ -320,27 +330,27 @@ class KnowledgeService:
                 success += 1
 
             session.commit()
-        logger.info(f"批量导入客服知识: shop_id={shop_id}, success={success}, skipped={skipped}")
+        logger.info(f"批量导入客服知识: shop_db_id={shop_db_id}, success={success}, skipped={skipped}")
         return success, skipped
 
-    def filter_customer_service_by_tag(self, shop_id: int, tag: str) -> List[CustomerServiceKnowledge]:
+    def filter_customer_service_by_tag(self, shop_db_id: int, tag: str) -> List[CustomerServiceKnowledge]:
         """按标签筛选客服知识"""
         with self.get_session() as session:
             # LIKE 查询匹配标签
             stmt = select(CustomerServiceKnowledge).where(
                 and_(
-                    CustomerServiceKnowledge.shop_id == shop_id,
+                    CustomerServiceKnowledge.shop_db_id == shop_db_id,
                     CustomerServiceKnowledge.enabled == True,
                     CustomerServiceKnowledge.tags.like(f"%{tag}%"),
                 )
             ).order_by(CustomerServiceKnowledge.created_at.desc())
             return list(session.scalars(stmt))
 
-    def get_all_tags(self, shop_id: int) -> List[str]:
+    def get_all_tags(self, shop_db_id: int) -> List[str]:
         """获取店铺所有标签（去重）"""
         with self.get_session() as session:
             stmt = select(CustomerServiceKnowledge.tags).where(
-                CustomerServiceKnowledge.shop_id == shop_id
+                CustomerServiceKnowledge.shop_db_id == shop_db_id
             )
             tags_list = []
             for row in session.execute(stmt):
@@ -351,29 +361,9 @@ class KnowledgeService:
 
     # ========== 检索 ==========
 
-    def _resolve_shop_id(self, shop_id: int) -> Optional[int]:
-        """
-        将店铺原始ID转换为数据库中的Shop.id
-
-        Args:
-            shop_id: 店铺原始ID（如591119888）
-
-        Returns:
-            数据库中的Shop.id（如1），如果找不到返回原值
-        """
-        with self.get_session() as session:
-            stmt = select(Shop).where(Shop.shop_id == str(shop_id))
-            shop = session.scalar(stmt)
-            if shop:
-                return shop.id
-            # Do not reinterpret an external platform ID as an internal
-            # autoincrement key: numeric collisions could cross shop scopes.
-            logger.warning(f"未找到店铺: shop_id={shop_id}")
-            return None
-
     def search_knowledge(
         self,
-        shop_id: int,
+        shop_db_id: int,
         query: Optional[str] = None,
         goods_id: Optional[int] = None,
         limit: int = 10,
@@ -382,7 +372,7 @@ class KnowledgeService:
         检索知识库
 
         Args:
-            shop_id: 店铺原始ID
+            shop_db_id: 店铺数据库ID（Shop表主键）
             query: 关键词查询，可为空
             goods_id: 精确查询特定商品，可为空
             limit: 返回结果最大数量
@@ -398,24 +388,19 @@ class KnowledgeService:
             "customer_service_knowledge": [],
         }
 
-        # 将店铺原始ID转换为数据库中的Shop.id
-        db_shop_id = self._resolve_shop_id(shop_id)
-        if db_shop_id is None:
-            return result
-
         with self.get_session() as session:
             # 如果指定了 goods_id，精确查询产品知识
             if goods_id is not None:
-                product = self.get_product_by_goods_id(db_shop_id, goods_id)
+                product = self.get_product_by_goods_id(shop_db_id, goods_id)
                 if product:
                     result["product_knowledge"] = [product]
             # 如果有关键词查询
             elif query and query.strip():
                 # 分词
                 words = jieba.cut_for_search(query.strip())
-                product_conditions = [ProductKnowledge.shop_id == db_shop_id]
+                product_conditions = [ProductKnowledge.shop_db_id == shop_db_id]
                 cs_conditions = [
-                    CustomerServiceKnowledge.shop_id == db_shop_id,
+                    CustomerServiceKnowledge.shop_db_id == shop_db_id,
                     CustomerServiceKnowledge.enabled == True,
                 ]
 
@@ -448,14 +433,14 @@ class KnowledgeService:
                 result["customer_service_knowledge"] = list(session.scalars(stmt_cs))
             else:
                 # 没有关键词，返回最新的产品知识和客服知识
-                stmt_p = select(ProductKnowledge).where(ProductKnowledge.shop_id == db_shop_id)\
+                stmt_p = select(ProductKnowledge).where(ProductKnowledge.shop_db_id == shop_db_id)\
                     .order_by(ProductKnowledge.created_at.desc())\
                     .limit(limit)
                 result["product_knowledge"] = list(session.scalars(stmt_p))
 
                 stmt_cs = select(CustomerServiceKnowledge).where(
                     and_(
-                        CustomerServiceKnowledge.shop_id == db_shop_id,
+                        CustomerServiceKnowledge.shop_db_id == shop_db_id,
                         CustomerServiceKnowledge.enabled == True,
                     )
                 ).order_by(CustomerServiceKnowledge.created_at.desc())\
@@ -525,6 +510,101 @@ class KnowledgeService:
             + "\n".join(output_parts).strip()
             + "\n＜/untrusted_knowledge＞"
         )
+
+    # ========== 知识文档 ==========
+
+    def list_documents_by_shop(self, shop_db_id: int) -> List[KnowledgeDocument]:
+        """获取店铺全部知识文档（含禁用），按添加时间倒序"""
+        with self.get_session() as session:
+            stmt = select(KnowledgeDocument).where(
+                KnowledgeDocument.shop_db_id == shop_db_id
+            ).order_by(KnowledgeDocument.created_at.desc())
+            return list(session.scalars(stmt))
+
+    def get_document_by_id(self, doc_id: int) -> Optional[KnowledgeDocument]:
+        """根据 ID 获取知识文档"""
+        with self.get_session() as session:
+            return session.get(KnowledgeDocument, doc_id)
+
+    def get_document_by_hash(self, shop_db_id: int, file_hash: str) -> Optional[KnowledgeDocument]:
+        """按店铺+文件 MD5 查找（用于重复添加检测）"""
+        with self.get_session() as session:
+            stmt = select(KnowledgeDocument).where(
+                and_(
+                    KnowledgeDocument.shop_db_id == shop_db_id,
+                    KnowledgeDocument.file_hash == file_hash,
+                )
+            )
+            return session.scalar(stmt)
+
+    def add_document(
+        self,
+        shop_db_id: int,
+        file_name: str,
+        stored_path: str,
+        file_hash: str,
+        chunk_count: int,
+    ) -> KnowledgeDocument:
+        """新增知识文档记录（调用前应先做 hash 去重检查）"""
+        with self.get_session() as session:
+            doc = KnowledgeDocument(
+                shop_db_id=shop_db_id,
+                file_name=file_name,
+                stored_path=stored_path,
+                file_hash=file_hash,
+                chunk_count=chunk_count,
+                enabled=True,
+            )
+            session.add(doc)
+            session.commit()
+            # commit 会使属性过期，refresh 后脱离 session 仍可安全访问 doc.id 等字段
+            session.refresh(doc)
+            logger.info(f"知识文档添加成功: shop_db_id={shop_db_id}, file_name={file_name}")
+            return doc
+
+    def set_document_enabled(self, doc_id: int, enabled: bool) -> bool:
+        """启用/禁用知识文档"""
+        with self.get_session() as session:
+            doc = session.get(KnowledgeDocument, doc_id)
+            if not doc:
+                return False
+            doc.enabled = enabled
+            session.commit()
+            return True
+
+    def delete_document(self, doc_id: int) -> Optional[KnowledgeDocument]:
+        """删除知识文档 DB 记录，返回被删记录（供上层删除文件与向量）"""
+        with self.get_session() as session:
+            doc = session.get(KnowledgeDocument, doc_id)
+            if not doc:
+                return None
+            deleted = KnowledgeDocument(
+                id=doc.id, shop_db_id=doc.shop_db_id,
+                file_name=doc.file_name, stored_path=doc.stored_path,
+            )
+            session.delete(doc)
+            session.commit()
+            logger.info(f"知识文档删除成功: id={doc_id}")
+            return deleted
+
+    def delete_documents_by_shop(self, shop_db_id: int) -> Optional[List[KnowledgeDocument]]:
+        """删除指定店铺的所有知识文档 DB 记录，返回被删记录列表（供上层批量删除文件与向量）"""
+        with self.get_session() as session:
+            docs = session.query(KnowledgeDocument).filter(KnowledgeDocument.shop_db_id == shop_db_id).all()
+            if not docs:
+                return None
+            deleted_list = [
+                KnowledgeDocument(
+                    id=d.id, shop_db_id=d.shop_db_id,
+                    file_name=d.file_name, stored_path=d.stored_path,
+                )
+                for d in docs
+            ]
+            for doc in docs:
+                session.delete(doc)
+            session.commit()
+            logger.info(f"店铺 {shop_db_id} 的知识文档全部删除成功，共 {len(deleted_list)} 条")
+            return deleted_list
 
     def get_all_shops(self) -> List[Shop]:
         """获取所有店铺列表（用于UI选择器）"""

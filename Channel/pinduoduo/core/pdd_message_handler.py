@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 from bridge.context import ChannelType, Context, ContextType
 from Channel.pinduoduo.pdd_message import PDDChatMessage
@@ -20,8 +21,8 @@ class MessageHandlerMixin:
     ) -> None:
         """Create one consumer and one Agent for this PDDChannel/account."""
         from Message import handler_chain
-        from Agent.CustomerAgent.custom.customer_agent import CustomerAgent
-        from core.di_container import container, configure_standard_services
+        from core.di_container import configure_standard_services
+        from Agent.factory import create_account_agent
 
         try:
             existing_consumer = self.consumer_manager.get_consumer(queue_name)
@@ -34,14 +35,14 @@ class MessageHandlerMixin:
                 max_concurrent=10,
             )
             if self._account_agent is None:
-                if not container.is_registered(CustomerAgent):
-                    configure_standard_services()
-                self._account_agent = container.get(CustomerAgent)
+                configure_standard_services()
+                self._account_agent = create_account_agent(account_info=self.account_info)
 
             handlers = handler_chain(
                 use_ai=True,
                 business_hours=self.business_hours,
                 bot=self._account_agent,
+                message_callback=getattr(self, '_message_callback', None),
             )
             for handler in handlers:
                 consumer.add_handler(handler)
@@ -78,6 +79,33 @@ class MessageHandlerMixin:
             )
             if not context:
                 return
+
+            # 调用消息回调（用于 UI 显示）
+            if hasattr(self, '_message_callback') and self._message_callback:
+                try:
+                    content = pdd_message.content
+                    if isinstance(content, dict):
+                        content = json.dumps(content, ensure_ascii=False)
+                    elif content is None:
+                        content = ""
+                    else:
+                        content = str(content)
+
+                    is_self = pdd_message.from_user == "mall_cs"
+                    nickname = pdd_message.nickname or ""
+                    timestamp = pdd_message.timestamp or time.time()
+                    from_uid = pdd_message.from_uid or ""
+
+                    # 回调函数签名: (account_data, content, is_self, nickname, timestamp, from_uid)
+                    account_data = {
+                        "channel_name": self.channel_name,
+                        "shop_id": shop_id,
+                        "user_id": user_id,
+                        "username": username,
+                    }
+                    self._message_callback(account_data, content, is_self, nickname, timestamp, from_uid)
+                except Exception as callback_error:
+                    self.logger.debug(f"message callback error: {callback_error}")
 
             if self._should_process_immediately(context):
                 await self._handle_immediate_message(context, shop_id, user_id)

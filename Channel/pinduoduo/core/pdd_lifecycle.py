@@ -16,9 +16,7 @@ class LifecycleMixin:
 
     async def start_account(self, shop_id: str, user_id: str, on_success: callable, on_failure: callable):
         """启动指定店铺下账号"""
-        requested_account_key = make_account_key(
-            ChannelType.PINDUODUO, shop_id, user_id
-        )
+        requested_account_key = make_account_key(ChannelType.PINDUODUO, shop_id, user_id)
         bound_account_key = getattr(self, "_account_key", None)
         if bound_account_key and bound_account_key != requested_account_key:
             message = "一个连接实例只能绑定一个账号"
@@ -26,6 +24,7 @@ class LifecycleMixin:
             on_failure(message)
             return
         account_info = db_manager.get_account(self.channel_name, shop_id, user_id)
+        self.account_info = account_info
         if not account_info:
             error_msg = f"账号 {user_id} 在数据库中不存在"
             self.logger.error(error_msg)
@@ -83,7 +82,7 @@ class LifecycleMixin:
                         self.logger.error(
                             f"等待重连任务完成时出错: error_type={type(task_error).__name__}"
                         )
-                del self._reconnect_tasks[connection_key]
+                self._reconnect_tasks.pop(connection_key, None)
                 self.logger.debug(f"已清理重连任务: {connection_key}")
 
             if connection_key in self._heartbeat_tasks:
@@ -100,7 +99,8 @@ class LifecycleMixin:
                         self.logger.error(
                             f"等待心跳任务完成时出错: error_type={type(task_error).__name__}"
                         )
-                del self._heartbeat_tasks[connection_key]
+                # 任务自身的 finally 块可能已删除该 key，用 pop 幂等清理避免 KeyError
+                self._heartbeat_tasks.pop(connection_key, None)
                 self.logger.debug(f"已清理心跳任务: {connection_key}")
 
             if connection_key in self._health_tasks:
@@ -117,7 +117,8 @@ class LifecycleMixin:
                         self.logger.error(
                             f"等待Cookie健康检查任务完成时出错: error_type={type(task_error).__name__}"
                         )
-                del self._health_tasks[connection_key]
+                # 任务自身的 finally 块可能已删除该 key，用 pop 幂等清理避免 KeyError
+                self._health_tasks.pop(connection_key, None)
                 self.logger.debug(f"已清理Cookie健康检查任务: {connection_key}")
 
             self.status_manager.update_status(shop_id, user_id, username, ConnectionState.DISCONNECTED)
@@ -136,10 +137,9 @@ class LifecycleMixin:
             self.logger.info(f"成功停止店铺 {shop_id} 账号 {username}")
 
         except Exception as e:
-            self.logger.error(
-                f"停止店铺 {shop_id} 账号 {user_id} 时发生错误: "
-                f"error_type={type(e).__name__}"
-            )
+            import traceback
+            self.logger.error(f"停止店铺 {shop_id} 账号 {user_id} 时发生错误: error_type={type(e).__name__}, error={e}")
+            self.logger.debug(f"Traceback: {traceback.format_exc()}")
 
     async def init(self, shop_id: str, user_id: str, username: str, on_success: callable, on_failure: callable):
         """初始化WebSocket连接和消息处理系统"""
@@ -177,8 +177,7 @@ class LifecycleMixin:
             ) as websocket:
                 self.ws = websocket
                 self.resource_manager.register_websocket(
-                    websocket,
-                    f"PDD WebSocket ({shop_id}-{username})"
+                    websocket, f"PDD WebSocket ({shop_id}-{username})"
                 )
                 self.logger.debug(f"WebSocket连接已建立: {shop_id}-{username}")
 
@@ -320,7 +319,7 @@ class LifecycleMixin:
                             f"停止任务时出错: {connection_key}, "
                             f"error_type={type(e).__name__}"
                         )
-                del self._reconnect_tasks[connection_key]
+                self._reconnect_tasks.pop(connection_key, None)
 
             for connection_key, task in list(self._heartbeat_tasks.items()):
                 if not task.done():
@@ -334,7 +333,7 @@ class LifecycleMixin:
                             f"停止心跳任务时出错: {connection_key}, "
                             f"error_type={type(e).__name__}"
                         )
-                del self._heartbeat_tasks[connection_key]
+                self._heartbeat_tasks.pop(connection_key, None)
 
             for connection_key, task in list(self._health_tasks.items()):
                 if not task.done():
@@ -348,7 +347,7 @@ class LifecycleMixin:
                             f"停止Cookie健康检查任务时出错: {connection_key}, "
                             f"error_type={type(e).__name__}"
                         )
-                del self._health_tasks[connection_key]
+                self._health_tasks.pop(connection_key, None)
 
             if self.ws:
                 await self._safe_close_websocket(self.ws)
@@ -521,10 +520,7 @@ class LifecycleMixin:
         except ws_exceptions.ConnectionClosed as cc:
             self.logger.warning(f"WebSocket连接正常关闭: {shop_id}-{username}, 代码: {cc.code}")
         except ws_exceptions.ConnectionClosedError as cce:
-            self.logger.error(
-                f"WebSocket连接异常关闭: {shop_id}-{username}, "
-                f"error_type={type(cce).__name__}"
-            )
+            self.logger.error(f"WebSocket连接异常关闭: {shop_id}-{username}, error_type={type(cce).__name__}")
         except Exception as e:
             self.logger.error(
                 f"消息循环错误: {shop_id}-{username}, "
@@ -651,7 +647,7 @@ class LifecycleMixin:
                     f"error_type={type(e).__name__}"
                 )
 
-            # CustomerAgent is transient per account; release its HTTP pool
+            # Agent is transient per account; release its HTTP pool
             # and SQLite engine after the consumer has drained.
             account_agent = getattr(self, "_account_agent", None)
             if account_agent is not None:

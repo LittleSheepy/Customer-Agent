@@ -1,9 +1,20 @@
 """
 拼多多账号异步登录认证
 """
+
+import time
 import os
+
+# import sys
+# from pathlib import Path
+# PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# sys.path.insert(0, str(PROJECT_ROOT))
+
 # 必须在导入 playwright 之前设置浏览器路径
 from pathlib import Path
+
+from Channel.pinduoduo.utils.API.get_messages import GetMessages
+from Channel.pinduoduo.utils.API.get_messages_users import GetMessagesUsers
 from utils.path_utils import get_app_dir
 from utils.runtime_path import get_data_path
 from utils.logger_loguru import get_logger
@@ -55,6 +66,7 @@ from database import db_manager
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 from Channel.pinduoduo.utils.API.get_shop_info import GetShopInfo
 from Channel.pinduoduo.utils.API.get_user_info import GetUserInfo
+from Channel.pinduoduo.utils.API.get_custom_service_info import GetCustomServiceInfo
 
 
 def _profile_scope_identity(profile_scope: Optional[str]):
@@ -538,6 +550,110 @@ class PDDLogin():
                 except Exception:
                     pass
 
+    async def get_anti_content(self):
+        playwright = None
+        context = None
+        try:
+            playwright = await async_playwright().start()
+            user_data_dir = str(self._profile_dir())
+            context = await self._launch_context(playwright, user_data_dir, headless=False)
+            page = await context.new_page()
+
+            captured = {}
+
+            # 用事件监听，纯读 header，最稳
+            def on_request(request):
+                url = request.url
+                if "latitude/search/message/getMessages" in url:
+                    ac = request.headers.get("anti-content")  # headers 已标准化为小写
+                    if ac:
+                        captured["anti_content"] = ac
+                        print(f"[拦截] anti-content: {ac[:60]}...")
+
+            page.on("request", on_request)
+
+            async def on_response(resp):
+                if "getMessages" in resp.url:  # getMessages / getMessagesUsers 都能命中
+                    try:
+                        captured.setdefault(resp.url, []).append(await resp.json())
+                    except Exception:
+                        pass
+
+            page.on("response", on_response)  # 必须在 goto 之前注册
+
+            # 正常登录流程不变
+            await page.goto(self.base_url)
+            await page.click("div.Common_item__3diIn:has-text('账号登录')")
+            await page.wait_for_selector("input[type='text']")
+            await page.fill("input[type='text']", self.name)
+            await page.fill("input[type='password']", self.password)
+            await page.click("button:has-text('登录')")
+            await page.wait_for_function(
+                "() => ['拼多多 商家后台','首页','订单查询'].includes(document.title)",
+                timeout=30000,
+            )
+            # 获取cookies并转换为字典格式
+            cookies_list = await context.cookies()
+            # 将playwright格式的cookies列表转换为字典格式，使用安全的get方法
+            cookies_dict = {cookie.get('name', ''): cookie.get('value', '') for cookie in cookies_list if cookie.get('name')}
+            cookies_json = json.dumps(cookies_dict)
+
+            # 关键：触发"真实"请求 —— 导航到消息中心页 / 点击对应入口，
+            # 让拼多多前端封装的请求库自动签名（不要用裸 fetch）
+            await page.goto("https://mms.pinduoduo.com/mms-chat/search?msfrom=mms_sidenav", wait_until="domcontentloaded")
+            # 或在页面上点进"消息/客服"入口：
+            # await page.click("text=消息中心")
+
+            # 等待真实请求带上 anti-content
+            try:
+                await page.wait_for_function(
+                    "() => true", timeout=1000
+                )  # 占位，实际用下面的轮询
+            except Exception:
+                pass
+            # 3) 关键：这个页面大概率在 iframe 里，需要先定位 frame
+            target_frame = page
+            for f in page.frames:
+                if "mms-chat" in f.url or "search" in f.url:
+                    target_frame = f
+                    break
+
+            # 4) 等查询按钮出现再点，不要硬 click
+            btn = target_frame.locator("button:has-text('查询'), button:has-text('查 询')")
+            await btn.first.wait_for(state="visible", timeout=15000)
+            await btn.first.click()
+            await asyncio.sleep(1)
+            try:
+                await page.wait_for_response(lambda r: "getMessages" in r.url, timeout=15000)
+            except Exception:
+                await page.screenshot(path="dbg.png")  # 点不到就截图看页面状态
+                print("未捕获响应：检查按钮是否命中 / 是否弹了滑块")
+
+            for _ in range(20):
+                if "anti_content" in captured:
+                    break
+                await asyncio.sleep(0.5)
+
+            if captured.get("anti_content"):
+                print(f"捕获成功: {captured['anti_content']}")
+                return captured["anti_content"]
+            print("未捕获：未触发到带签名的真实 getMessages 请求")
+            return False
+        except Exception as e:
+            self.logger.error(f"get_anti_content失败: {type(e).__name__}: {e}")
+            return False
+        finally:
+            if context:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+            if playwright:
+                try:
+                    await playwright.stop()
+                except Exception:
+                    pass
+
     def Set_user_info(self,cookies_json):
         user_info = GetUserInfo(cookies_json)
         result = user_info.get_user_info()
@@ -546,6 +662,30 @@ class PDDLogin():
             return None, None, None
         user_id, user_name, mall_id = result
         return user_id, user_name, mall_id
+
+    def get_custom_service_info(self,cookies_json):
+        custom_service_info = GetCustomServiceInfo(cookies_json)
+        result = custom_service_info.get_custom_service_info()
+        if result is False:
+            self.logger.error("获取用户信息失败")
+            return None, None, None
+        return result
+
+    def get_messages_users(self,cookies_json):
+        custom_service_info = GetMessagesUsers(cookies_json)
+        result = custom_service_info.get_messages_users()
+        if result is False:
+            self.logger.error("获取店铺客户列表失败")
+            return None, None, None
+        return result
+
+    def get_messages(self, cookies_json, uid, captured_anti_content):
+        messages = GetMessages(cookies_json)
+        result = messages.get_messages(uid, captured_anti_content)
+        if result is False:
+            self.logger.error("获取店铺客户消息列表失败")
+            return None, None, None
+        return result
 
     def Set_shop_info(self,cookies_json):
         shop_info = GetShopInfo(cookies_json)
@@ -578,8 +718,10 @@ async def login_pdd(name, password, headless=False, profile_scope=None):
     try:
         # 获取用户信息和店铺信息
         user_id, user_name, mall_id = pdd_login.Set_user_info(cookies_json)
+        custom_service_info = pdd_login.get_custom_service_info(cookies_json)
         shop_id, shop_name, mallLogo = pdd_login.Set_shop_info(cookies_json)
-        
+        chat_nick_name = custom_service_info['customServiceInfo']['chatNickName']
+        chat_head_img = custom_service_info['customServiceInfo']['chatHeadImageUrl']
         # 检查是否成功获取到必要信息
         if user_id is None or shop_id is None:
             pdd_login.logger.error(f"账号 '{name}' 登录成功，但获取用户信息或店铺信息失败")
@@ -604,6 +746,8 @@ async def login_pdd(name, password, headless=False, profile_scope=None):
             "shop_id": shop_id,
             "shop_name": shop_name,
             "shop_logo": mallLogo,
+            "chat_nick_name": chat_nick_name,
+            "chat_head_img": chat_head_img,
             "user_id": user_id,
             "username": name,  # 使用传入的登录名
             "password": password, # 使用传入的密码
@@ -630,9 +774,6 @@ async def refresh_pdd_cookies(name, password=None, profile_scope=None):
     )
     cookies_json = await pdd_login.refresh_cookies()
     if not cookies_json and profile_scope:
-        # Existing installs may still have only the legacy username profile.
-        # Read it once as a compatibility fallback; new logins migrate it to
-        # the scoped path above.
         legacy_login = PDDLogin(name=name, password=password or "")
         cookies_json = await legacy_login.refresh_cookies()
         if cookies_json:
@@ -645,6 +786,7 @@ async def refresh_pdd_cookies(name, password=None, profile_scope=None):
     try:
         # 获取用户信息和店铺信息
         user_id, user_name, mall_id = pdd_login.Set_user_info(cookies_json)
+        custom_service_info = pdd_login.get_custom_service_info(cookies_json)
         shop_id, shop_name, mallLogo = pdd_login.Set_shop_info(cookies_json)
         
         # 检查是否成功获取到必要信息
@@ -680,3 +822,7 @@ async def refresh_pdd_cookies(name, password=None, profile_scope=None):
         )
         return False
 
+if __name__ == '__main__':
+    import asyncio
+    result = asyncio.run(login_pdd("19006414714", "2cuiliLIU"))
+    pass

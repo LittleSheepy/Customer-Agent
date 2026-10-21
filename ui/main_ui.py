@@ -51,47 +51,39 @@ class MainWindow(FluentWindow):
         QTimer.singleShot(200, self.lazy_load_views)
 
     def lazy_load_views(self):
-        """延迟加载各个视图，提高启动速度"""
+        """延迟加载各个视图，重依赖已在方法内延迟导入，此处仅创建 UI 组件"""
         t0 = time.perf_counter()
-        # 局部按需导入，减少启动时的重依赖加载
+
         t = time.perf_counter()
         from ui.auto_reply_ui import AutoReplyUI
-        self.logger.info(f"  import AutoReplyUI: {time.perf_counter()-t:.2f}s")
-        t = time.perf_counter()
-        from ui.keyword_ui import KeywordManagerWidget
-        self.logger.info(f"  import KeywordManagerWidget: {time.perf_counter()-t:.2f}s")
-        t = time.perf_counter()
-        from ui.user_ui import UserManagerWidget
-        self.logger.info(f"  import UserManagerWidget: {time.perf_counter()-t:.2f}s")
-        t = time.perf_counter()
-        from ui.log_ui import LogUI
-        self.logger.info(f"  import LogUI: {time.perf_counter()-t:.2f}s")
-        t = time.perf_counter()
-        from ui.setting_ui import SettingUI
-        self.logger.info(f"  import SettingUI: {time.perf_counter()-t:.2f}s")
-        t = time.perf_counter()
-        from ui.Knowledge_ui import KnowledgeUI
-        self.logger.info(f"  import KnowledgeUI: {time.perf_counter()-t:.2f}s")
-        t = time.perf_counter()
         self.monitor_view = AutoReplyUI(self)
         self.logger.info(f"  AutoReplyUI: {time.perf_counter()-t:.2f}s")
+
         t = time.perf_counter()
+        from ui.keyword_ui import KeywordManagerWidget
         self.keyword_manager_view = KeywordManagerWidget(self)
         self.logger.info(f"  KeywordManagerWidget: {time.perf_counter()-t:.2f}s")
+
         t = time.perf_counter()
+        from ui.user_ui import UserManagerWidget
         self.user_manager_view = UserManagerWidget(self)
         self.logger.info(f"  UserManagerWidget: {time.perf_counter()-t:.2f}s")
+
         t = time.perf_counter()
+        from ui.log_ui import LogUI
         self.log_view = LogUI(self)
         self.logger.info(f"  LogUI: {time.perf_counter()-t:.2f}s")
+
         t = time.perf_counter()
+        from ui.Knowledge_ui import KnowledgeUI
         self.knowledge_view = KnowledgeUI(self)
         self.logger.info(f"  KnowledgeUI: {time.perf_counter()-t:.2f}s")
+
         t = time.perf_counter()
+        from ui.setting_ui import SettingUI
         self.settingInterface = SettingUI(self)
         self.logger.info(f"  SettingUI: {time.perf_counter()-t:.2f}s")
 
-        # 初始化导航
         self.initNavigation()
         self.logger.info(f"延迟视图初始化耗时: {time.perf_counter() - t0:.2f}s")
 
@@ -119,11 +111,11 @@ class MainWindow(FluentWindow):
     # 初始化窗口
     def initWindow(self):
         # 先设置最小尺寸
-        self.setMinimumWidth(1280)
-        self.setMinimumHeight(720)
+        self.setMinimumWidth(1500)
+        self.setMinimumHeight(800)
         
         # 设置默认尺寸（避免几何冲突）
-        self.resize(1400, 800)
+        self.resize(1500, 800)
         
         # 最后最大化显示
         self.showMaximized()

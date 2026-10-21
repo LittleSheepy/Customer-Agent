@@ -11,13 +11,10 @@ from dataclasses import dataclass
 import json
 import time
 
-from config import get_active_llm_profile
-
 from Channel.pinduoduo.utils.API.product_manager import ProductManager
 from database.knowledge_service import KnowledgeService
 from utils.logger_loguru import get_logger
-from utils.llm_provider import LLMProfile, ProfileValidationError
-from utils.llm_transport import async_completion
+
 
 logger = get_logger("ProductSync")
 
@@ -67,14 +64,14 @@ class ProductSyncService:
         """重置取消事件"""
         self._cancellation_event.clear()
 
-    def _snapshot_llm_profile(self) -> Optional[LLMProfile]:
-        """Capture one validated profile for a synchronization run."""
+    def _create_llm(self):
+        """创建经配置验证的 ChatOpenAI 实例，失败时返回 None"""
+        from Agent import create_chat_model
         try:
-            return get_active_llm_profile(require_confirmation=False)
-        except ProfileValidationError as exc:
+            return create_chat_model(temperature=0.3)
+        except Exception as exc:
             logger.warning(
-                "LLM profile unavailable for product sync; "
-                f"error_code={exc.code}"
+                f"LLM unavailable for product sync: error_type={type(exc).__name__}"
             )
             return None
 
@@ -103,7 +100,7 @@ class ProductSyncService:
             最终同步进度
         """
         self._reset_cancellation()
-        llm_profile = self._snapshot_llm_profile()
+        llm = self._create_llm()
         pm = ProductManager(shop_id=str(shop_id), user_id=user_id)
 
         # ================== 第一阶段：快速抓取商品列表 ==================
@@ -214,7 +211,7 @@ class ProductSyncService:
                 # 先只保存基本信息，不调用LLM
                 await asyncio.to_thread(
                     self.knowledge_service.add_or_update_product,
-                    shop_id=shop_db_id,
+                    shop_db_id=shop_db_id,
                     goods_id=goods_id,
                     goods_name=goods_name,
                     price=product.get("price"),
@@ -292,13 +289,13 @@ class ProductSyncService:
                 extracted = await self._extract_product_knowledge(
                     product,
                     product_info,
-                    profile=llm_profile,
+                    llm=llm,
                 )
 
                 # 立即更新到数据库（仅更新提取内容）
                 await asyncio.to_thread(
                     self.knowledge_service.update_product_extracted_content,
-                    shop_id=shop_db_id,
+                    shop_db_id=shop_db_id,
                     goods_id=goods_id,
                     specifications=json.dumps(product_info.get("specifications", [])),
                     extracted_content=extracted,
@@ -343,7 +340,7 @@ class ProductSyncService:
         self,
         list_product: Dict[str, Any],
         detail_product: Dict[str, Any],
-        profile: Optional[LLMProfile] = None,
+        llm=None,
     ) -> str:
         """
         调用LLM提取产品知识
@@ -355,9 +352,9 @@ class ProductSyncService:
         Returns:
             LLM提取的产品知识文本
         """
-        profile = profile or self._snapshot_llm_profile()
-        if profile is None:
-            logger.warning("LLM profile unavailable, returning basic info only")
+        llm = llm or self._create_llm()
+        if llm is None:
+            logger.warning("LLM unavailable, returning basic info only")
             return self._format_basic_info(list_product, detail_product)
 
         # 构建prompt
@@ -413,14 +410,7 @@ class ProductSyncService:
         ]
 
         try:
-            response = await async_completion(
-                profile,
-                messages,
-                temperature=0.3,
-                use_tools=False,
-                response_format={"type": "json_object"},
-                timeout=120.0,
-            )
+            response = await llm.ainvoke(messages, response_format={"type": "json_object"})
             content = str(response.content or "").strip()
             logger.debug(f"LLM输出长度={len(content)}")
 

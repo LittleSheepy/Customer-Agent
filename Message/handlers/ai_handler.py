@@ -8,21 +8,17 @@ from typing import Dict, Any, Optional
 from bridge.context import Context, ContextType
 from .base import BaseHandler
 from .preprocessor import MessagePreprocessor
-from Agent.bot import Bot
+from Agent.AgentBase import AgentBase
 
 
 class AIReplyHandler(BaseHandler):
     """专注的AI回复处理器"""
 
-    def __init__(self, bot: Bot = None, auto_reply_types: set = None):
+    def __init__(self, bot: AgentBase = None, auto_reply_types: set = None, message_callback=None):
         super().__init__("AIReplyHandler")
-        # 从 DI 容器获取 CustomerAgent 单例（如果未传入）
-        if bot is None:
-            from core.di_container import container
-            from Agent.CustomerAgent.custom.customer_agent import CustomerAgent
-            bot = container.get(CustomerAgent)
         self.bot = bot
         self.preprocessor = MessagePreprocessor()
+        self.message_callback = message_callback  # 用于通知 UI 新消息
         self.auto_reply_types = auto_reply_types or {
             ContextType.TEXT,
             ContextType.GOODS_INQUIRY,
@@ -72,16 +68,8 @@ class AIReplyHandler(BaseHandler):
             return None
 
         try:
-            # 优先使用异步接口，其次回退到同步接口
-            if hasattr(self.bot, 'async_reply'):
-                res = await self.bot.async_reply(query, context)
-                return getattr(res, 'content', str(res))
-            elif hasattr(self.bot, 'reply'):
-                res = self.bot.reply(query, context)
-                return getattr(res, 'content', str(res))
-            else:
-                self.logger.warning("Bot不支持reply或async_reply方法")
-                return None
+            res = await self.bot.async_reply(query, context)
+            return getattr(res, 'content', str(res))
 
         except Exception as e:
             self.logger.error(
@@ -109,6 +97,26 @@ class AIReplyHandler(BaseHandler):
                 return False
             result = await asyncio.to_thread(sender.send_text, shop_id, user_id, from_uid, reply)
             if isinstance(result, dict) and result.get("success"):
+                # 发送成功后，通过回调通知 UI
+                if self.message_callback:
+                    try:
+                        import time
+                        account_data = {
+                            "shop_id": shop_id,
+                            "user_id": user_id,
+                            "channel_name": "pinduoduo",
+                            "shop_name": metadata.get("shop_name", ""),
+                        }
+                        self.message_callback(
+                            account_data,
+                            reply,
+                            True,  # is_self=True (客服发送)
+                            metadata.get("csname", "客服"),
+                            time.time(),
+                            from_uid
+                        )
+                    except Exception as cb_error:
+                        self.logger.debug(f"消息回调通知失败: {cb_error}")
                 return True
             return False
 

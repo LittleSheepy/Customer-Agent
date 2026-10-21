@@ -11,7 +11,7 @@ class AutoReplyManager:
         self.running_accounts: Dict[str, 'AutoReplyThread'] = {}  # 正在运行的账号线程
         self.logger = get_logger("AutoReplyManager")
 
-    def start_auto_reply(self, account_data: dict) -> bool:
+    def start_auto_reply(self, account_data: dict, message_callback=None) -> bool:
         """启动账号自动回复"""
         try:
             account_key = self._account_key(account_data)
@@ -22,7 +22,7 @@ class AutoReplyManager:
                 return False
 
             # 创建并启动自动回复线程
-            thread = AutoReplyThread(account_data)
+            thread = AutoReplyThread(account_data, message_callback=message_callback)
             self.running_accounts[account_key] = thread
 
             # 连接信号

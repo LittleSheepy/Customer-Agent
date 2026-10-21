@@ -9,13 +9,13 @@ from typing import Any, Dict, Optional
 
 class PDDMsgType(IntEnum):
     """拼多多消息类型枚举"""
-    TEXT = 0
-    IMAGE = 1
-    VIDEO = 14
-    WITHDRAW = 1002
-    EMOTION = 5
-    GOODS_SPEC = 64
-    TRANSFER = 24
+    TEXT        = 0
+    IMAGE       = 1
+    EMOTION     = 5         # 表情
+    VIDEO       = 14
+    TRANSFER    = 24
+    GOODS_SPEC  = 64
+    WITHDRAW    = 1002
 
 
 class PDDSubType(IntEnum):
@@ -149,6 +149,7 @@ class MessageTypeHandler:
             "to_uid": _safe_get(msg_data, "message", "to", "uid")
         }
         return ContextType.TRANSFER,transfer_info
+
 class PDDChatMessage(ChatMessage):
     """拼多多消息实现类"""
     

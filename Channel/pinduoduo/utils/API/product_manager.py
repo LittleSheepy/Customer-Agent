@@ -22,7 +22,7 @@ class ProductManager(BaseRequest):
 
     def get_product_list(self, page=1, size=10):
         """
-        获取店铺商品列表
+        获取店铺商品列表-聊天右侧推荐商品
 
         Args:
             page (int): 页码，默认1

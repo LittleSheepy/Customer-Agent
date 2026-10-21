@@ -89,6 +89,130 @@ class LoginThread(QThread):
             self.login_finished.emit(False)
 
 
+class CookieUpdateThread(QThread):
+    """Cookie 验证与更新线程"""
+    cookie_updated = Signal(object)  # 完成信号，传递结果 dict: {success: bool, message: str}
+
+    def __init__(self, account_data: dict, new_cookies_str: str = ""):
+        super().__init__()
+        self.account_data = account_data
+        self.new_cookies_str = new_cookies_str.strip() if new_cookies_str else ""
+
+    def run(self):
+        try:
+            from Channel.pinduoduo.cookie_utils import check_cookies_valid, perform_relogin
+
+            channel_name = self.account_data["channel_name"]
+            shop_id = self.account_data["shop_id"]
+            user_id = self.account_data["user_id"]
+            username = self.account_data.get("username", "")
+            password = self.account_data.get("password", "")
+
+            # 如果用户输入了新 cookie，直接解析并验证
+            if self.new_cookies_str:
+                cookies_dict = self._parse_cookies(self.new_cookies_str)
+                if cookies_dict is None:
+                    self.cookie_updated.emit({"success": False, "message": "Cookie 格式错误，请输入合法的 JSON"})
+                    return
+                valid = check_cookies_valid(channel_name, shop_id, user_id, cookies_dict)
+                if valid is True:
+                    # 验证通过，写入 DB 和缓存
+                    from Channel.pinduoduo.cookie_cache import cookie_cache
+                    cookie_cache.set(channel_name, shop_id, user_id, cookies_dict)
+                    account_service.update_account_cookies(
+                        channel_name, shop_id, user_id, self.new_cookies_str,
+                    )
+                    self.cookie_updated.emit({"success": True, "message": "Cookie 验证通过，已更新"})
+                else:
+                    self.cookie_updated.emit({"success": False, "message": "Cookie 验证失败，已过期或无效"})
+                return
+
+            # 未输入新 cookie，从 DB 加载并验证
+            cookies_raw = self.account_data.get("cookies")
+            if not cookies_raw:
+                logger.info(f"无缓存 cookie，直接重新登录: {username}")
+                ok = perform_relogin(
+                    channel_name, shop_id, user_id, username, password, True,
+                )
+                if ok:
+                    self.cookie_updated.emit({"success": True, "message": "重新登录成功，cookie 已更新"})
+                else:
+                    self.cookie_updated.emit({"success": False, "message": "重新登录失败，请检查账号密码"})
+                return
+
+            # 解析 cookie
+            cookies_dict = self._parse_cookies(cookies_raw)
+            if not cookies_dict:
+                ok = perform_relogin(
+                    channel_name, shop_id, user_id, username, password, True,
+                )
+                if ok:
+                    self.cookie_updated.emit({"success": True, "message": "重新登录成功，cookie 已更新"})
+                else:
+                    self.cookie_updated.emit({"success": False, "message": "重新登录失败，请检查账号密码"})
+                return
+
+            # 验证 cookie 有效性
+            valid = check_cookies_valid(channel_name, shop_id, user_id, cookies_dict)
+            if valid is True:
+                self.cookie_updated.emit({"success": True, "message": "Cookie 有效，无需更新"})
+                return
+
+            # cookie 失效，触发重登
+            logger.info(f"Cookie 已失效，触发重登: {username}")
+            ok = perform_relogin(
+                channel_name, shop_id, user_id, username, password, True,
+            )
+            if ok:
+                self.cookie_updated.emit({"success": True, "message": "Cookie 已更新"})
+            else:
+                self.cookie_updated.emit({"success": False, "message": "重新登录失败，请检查账号密码"})
+
+        except Exception as e:
+            logger.error(f"Cookie 更新线程异常: error_type={type(e).__name__}")
+            self.cookie_updated.emit({"success": False, "message": f"异常: {type(e).__name__}"})
+
+    @staticmethod
+    def _parse_cookies(raw) -> Optional[dict]:
+        """解析 cookie，支持多种格式：
+
+        1. dict —— 直接返回
+        2. JSON 字符串 —— 解析为 dict
+        3. 浏览器复制的 cookie 字符串（key1=value1; key2=value2）—— 拆分解析
+        """
+        import json as _json
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            raw = raw.strip()
+            if not raw:
+                return None
+            # 尝试 JSON
+            try:
+                parsed = _json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+            except _json.JSONDecodeError:
+                pass
+            # 尝试浏览器格式: key1=value1; key2=value2
+            result = {}
+            for pair in raw.split(";"):
+                pair = pair.strip()
+                if not pair:
+                    continue
+                if "=" not in pair:
+                    continue
+                key, _, value = pair.partition("=")
+                key = key.strip()
+                value = value.strip()
+                if key:
+                    result[key] = value
+            if result:
+                return result
+            return None
+        return None
+
+
 class AccountCard(CardWidget):
     """账号卡片组件"""
     
@@ -96,6 +220,7 @@ class AccountCard(CardWidget):
     edit_clicked = pyqtSignal(dict)  # 编辑按钮点击信号，传递账号信息
     delete_clicked = pyqtSignal(dict)  # 删除按钮点击信号，传递账号信息
     verify_clicked = pyqtSignal(dict)  # 验证按钮点击信号，传递账号信息
+    cookie_update_clicked = pyqtSignal(dict)  # 更新cookie按钮点击信号
     
     def __init__(self, account_data: dict, parent=None):
         super().__init__(parent)
@@ -259,6 +384,12 @@ class AccountCard(CardWidget):
         self.edit_btn = PushButton("编辑")
         self.edit_btn.setIcon(FIF.EDIT)
         self.edit_btn.setFixedSize(100, 32)
+
+        # 更新cookie按钮
+        self.cookie_btn = PushButton("更新cookie")
+        self.cookie_btn.setIcon(FIF.UPDATE)
+        self.cookie_btn.setFixedWidth(130)
+        self.cookie_btn.setFixedHeight(32)
        
         # 删除按钮
         self.delete_btn = PushButton("删除")
@@ -267,6 +398,7 @@ class AccountCard(CardWidget):
 
         buttons_layout.addWidget(self.verify_btn)
         buttons_layout.addWidget(self.edit_btn)
+        buttons_layout.addWidget(self.cookie_btn)
         buttons_layout.addWidget(self.delete_btn)
         
         # 添加到操作布局
@@ -296,6 +428,7 @@ class AccountCard(CardWidget):
         """连接信号"""
         self.verify_btn.clicked.connect(lambda: self.verify_clicked.emit(self.account_data))
         self.edit_btn.clicked.connect(lambda: self.edit_clicked.emit(self.account_data))
+        self.cookie_btn.clicked.connect(lambda: self.cookie_update_clicked.emit(self.account_data))
         self.delete_btn.clicked.connect(lambda: self.delete_clicked.emit(self.account_data))
     
     def setVerifyStatus(self, is_verifying: bool):
@@ -306,6 +439,15 @@ class AccountCard(CardWidget):
         else:
             self.verify_btn.setText("验证")
             self.verify_btn.setEnabled(True)
+
+    def setCookieUpdating(self, is_updating: bool):
+        """设置 cookie 更新状态"""
+        if is_updating:
+            self.cookie_btn.setText("更新中...")
+            self.cookie_btn.setEnabled(False)
+        else:
+            self.cookie_btn.setText("更新cookie")
+            self.cookie_btn.setEnabled(True)
     
     def updateStatus(self, new_status: int):
         """更新账号状态"""
@@ -507,6 +649,7 @@ class UserManagerWidget(QFrame):
             account_card.verify_clicked.connect(self.onVerifyAccount)
             account_card.edit_clicked.connect(self.onEditAccount)
             account_card.delete_clicked.connect(self.onDeleteAccount)
+            account_card.cookie_update_clicked.connect(self.onUpdateCookie)
             
             self.accounts_layout.addWidget(account_card)
         
@@ -758,6 +901,113 @@ class UserManagerWidget(QFrame):
                     
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"删除账号时发生错误：{str(e)}")
+
+    def onUpdateCookie(self, account_data: dict):
+        """更新 cookie：弹窗输入新 cookie 后验证"""
+        # 找到对应的账号卡片
+        account_card = None
+        for i in range(self.accounts_layout.count() - 1):
+            widget = self.accounts_layout.itemAt(i).widget()
+            if isinstance(widget, AccountCard) and widget.account_data == account_data:
+                account_card = widget
+                break
+        if not account_card:
+            return
+
+        # 弹窗让用户输入 cookie
+        dialog = CookieInputDialog(account_data, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        new_cookies_str = dialog.get_cookie_text()
+        account_card.setCookieUpdating(True)
+
+        self._cookie_thread = CookieUpdateThread(account_data, new_cookies_str)
+        self._cookie_thread.cookie_updated.connect(
+            lambda result: self._on_cookie_update_finished(account_card, account_data, result)
+        )
+        self._cookie_thread.start()
+
+    def _on_cookie_update_finished(self, account_card: AccountCard, account_data: dict, result: dict):
+        """Cookie 更新完成回调（与验证按钮保持一致的流程）"""
+        account_card.setCookieUpdating(False)
+        success = result.get("success", False)
+        message = result.get("message", "")
+
+        try:
+            if success:
+                # 更新账号状态为在线
+                account_service.update_account_status(
+                    account_data["channel_name"],
+                    account_data["shop_id"],
+                    account_data["user_id"],
+                    1  # 在线状态
+                )
+                account_card.updateStatus(1)
+                QMessageBox.information(self, "更新cookie", message)
+            else:
+                # 更新账号状态为离线
+                account_service.update_account_status(
+                    account_data["channel_name"],
+                    account_data["shop_id"],
+                    account_data["user_id"],
+                    3  # 离线状态
+                )
+                account_card.updateStatus(3)
+                QMessageBox.warning(self, "更新cookie", message)
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"更新账号状态时发生错误：{str(e)}")
+
+        # 重新加载数据以确保同步
+        self.reloadAccounts()
+
+
+class CookieInputDialog(QDialog):
+    """Cookie 输入对话框：粘贴新 cookie JSON 后验证"""
+
+    def __init__(self, account_data: dict, parent=None):
+        super().__init__(parent)
+        self.account_data = account_data
+        self.setWindowTitle("更新 Cookie")
+        self.setModal(True)
+        self.resize(500, 350)
+        self.setupUI()
+
+    def setupUI(self):
+        from qfluentwidgets import TextEdit, PrimaryPushButton
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        # 提示信息
+        info = BodyLabel(
+            f"店铺：{self.account_data['shop_name']} 账号：{self.account_data['username']}\n"
+            f"请粘贴新的 Cookie（浏览器复制的格式即可），留空则自动重新登录："
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        # Cookie 输入框
+        self.cookie_edit = TextEdit()
+        self.cookie_edit.setPlaceholderText('key1=value1; key2=value2; key3=value3')
+        self.cookie_edit.setMinimumHeight(150)
+        layout.addWidget(self.cookie_edit)
+
+        # 按钮
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addStretch()
+        self.ok_btn = PrimaryPushButton("验证并更新")
+        self.cancel_btn = PushButton("取消")
+        buttons_layout.addWidget(self.cancel_btn)
+        buttons_layout.addWidget(self.ok_btn)
+        layout.addLayout(buttons_layout)
+
+        self.ok_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+
+    def get_cookie_text(self) -> str:
+        """获取输入的 cookie 文本"""
+        return self.cookie_edit.toPlainText().strip()
 
 
 class EditAccountDialog(QDialog):

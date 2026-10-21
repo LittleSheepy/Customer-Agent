@@ -20,10 +20,15 @@
 import sys
 import ctypes
 import os
+import warnings
 from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QApplication
+from dotenv import load_dotenv
+load_dotenv("D:/00sheepy/.env")
 
+# 抑制 LangChain + Pydantic 序列化警告（已知无害的 cosmetic warning）
+warnings.filterwarnings("ignore", message="Pydantic serializer warnings:")
 # ============================================================================
 # 全局单例预初始化（确保正确的初始化顺序）
 # ============================================================================
@@ -31,7 +36,8 @@ from PyQt6.QtWidgets import QApplication
 from config import config as _app_config
 
 # 2. 数据库管理器（通过 DI 代理，懒加载）
-from database import db_manager as _app_db_manager
+# from database import db_manager as _app_db_manager
+
 
 # 3. 日志系统（依赖配置）
 from utils.logger_loguru import get_logger as _get_logger
